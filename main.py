@@ -307,6 +307,8 @@ class GUI(pyglet.window.Window):
         self.line_colors = False
         self.triangle_show = False
         self.slow_down = 1
+        
+        self.on_start()
 
     def on_key_press(self, symbol, modifiers):
         if symbol == key.SPACE:
