@@ -9,6 +9,25 @@ def dist_sq(coords_1, coords_2):
     return (coords_1[0] - coords_2[0])**2 + (coords_1[1] - coords_2[1])**2
 
 
+def not_part_of_triplet(lis, elem):
+    for other in lis:
+        if other == elem:
+            continue
+        if elem[0] in other:
+            for other_2 in lis:
+                if other_2 == elem or other_2 == other:
+                    continue
+                if ((other_2[0] in elem or other_2[0] in other) and
+                        (other_2[1] in elem or other_2[1] in other)):
+                    return False
+    return True
+
+
+def gen_color(triplet, seed):
+    t_rand = hash((triplet, seed))
+    return t_rand % 256, (t_rand//256) % 256, ((t_rand//256)//256) % 256
+
+
 class Point:
 
     def __init__(self, position, velocity):
@@ -30,31 +49,37 @@ class Point:
 
 class Field:
 
-    def __init__(self, point_num, height, feel_num, air_resistance, bounciness, func, screen_size, init_vel=0):
+    def __init__(self, point_num, height, feel_num, air_resistance, bounciness, funcs, screen_size,
+                 symmetric=True, init_vel=0):
         self.num = point_num
         self.height = height
         self.feel_num = feel_num
         self.air = air_resistance
         self.bounce = bounciness
-        self.func = func
+        self.funcs = funcs
         self.scsz = screen_size
+        self.symmetric_forces = symmetric
         self.init_vel = init_vel
         self.aspect_ratio = self.scsz[0]/self.scsz[1]  # aspect ratio of screen
         self.real_ratio = self.scsz[1]/self.height  # ratio of actual height to screen height
         self.update_num = 0
         self.points = []
         self.lines = []
+        self.triangles = []
         self.p_data = []
         self.pc_data = []
         self.l_data = []
         self.lc1_data = []
         self.lc_data = []
+        self.tr_data = []
+        self.trc_data = []
         self.grabbed = None
         self.last_pos = (0, 0)
         self.point_color = [255, 255, 255]
         self.default_line_color = [255, 255, 255]
         self.special_line_color_1 = [255, 110, 110]
         self.special_line_color_2 = [70, 255, 120]
+        self.seed = random.random()
         self.reset()
 
     def new_point(self):
@@ -81,6 +106,7 @@ class Field:
             self.lines[f] = []
             for c in closest:
                 self.lines[f].append(c[0])
+        self.triangles = self.find_triangles()
         self.pc_data = self.num * self.point_color
         self.lc1_data = (2 * self.num * self.feel_num) * self.default_line_color
         self.prepare_data()
@@ -135,13 +161,18 @@ class Field:
             for c in closest:
                 self.lines[f].append(c[0])
                 act_dist = math.sqrt(c[1])
-                force = self.func(act_dist)
+                if not act_dist:
+                    # points are on top of each other
+                    continue
+                force = self.funcs[f % len(self.funcs)](act_dist)
                 x_force = force * (self.points[f].pos[0] - self.points[c[0]].pos[0]) / act_dist
                 y_force = force * (self.points[f].pos[1] - self.points[c[0]].pos[1]) / act_dist
                 self.points[f].vel[0] += x_force
                 self.points[f].vel[1] += y_force
-                self.points[c[0]].vel[0] -= x_force
-                self.points[c[0]].vel[1] -= y_force
+                if self.symmetric_forces:
+                    # this makes forces symmetric, but obeying newton is for nerds
+                    self.points[c[0]].vel[0] -= x_force
+                    self.points[c[0]].vel[1] -= y_force
         # forces from the bounds
         for f in range(len(self.points)):
             pot_pos = self.points[f].pseudo_move()
@@ -156,11 +187,28 @@ class Field:
             self.points[f].vel[0] *= self.air
             self.points[f].vel[1] *= self.air
 
+    def find_triangles(self):
+        all_tri = set()
+        for p in range(len(self.points)):
+            p_tri = set()
+            for c in self.lines[p]:
+                for c2 in self.lines[c]:
+                    if c2 in self.lines[p]:
+                        p_tri.add(tuple(sorted((c, c2))))
+            for tri in p_tri:
+                if not_part_of_triplet(p_tri, tri):
+                    all_tri.add(tuple(sorted((p, tri[0], tri[1]))))
+        return list(all_tri)
+
+    def reseed(self):
+        self.seed = random.random()
+
     def update(self, num=1):
         # first we update the velocities of the points based on their forces
         self.update_num = (self.update_num + 1) % num
         if self.update_num == 1 or num == 1:
             self.update_vel()
+            self.triangles = self.find_triangles()
         for f in range(len(self.points)):
             # then we update the position of the points based on their velocities
             self.points[f].move(div=num)
@@ -171,26 +219,35 @@ class Field:
         self.move_grabbed()
         self.prepare_data()
 
+    def points_to_real(self, point_nums):
+        # converts a list of point indices to their corresponding real coords as a flattened list
+        data = []
+        for num in point_nums:
+            data += [self.points[num].pos[0] * self.real_ratio,
+                     self.points[num].pos[1] * self.real_ratio]
+        return data
+
     def prepare_data(self):
         # transforms p_data into screen coordinates
         # then puts it in proper openGL type
         self.p_data = []
         self.l_data = []
         self.lc_data = []
+        self.tr_data = []
+        self.trc_data = []
         for f in range(len(self.points)):
-            self.p_data += [self.points[f].pos[0] * self.real_ratio,
-                            self.points[f].pos[1] * self.real_ratio]
+            self.p_data += self.points_to_real((f,))
             for i in self.lines[f]:
-                self.l_data += [self.points[f].pos[0] * self.real_ratio,
-                                self.points[f].pos[1] * self.real_ratio,
-                                self.points[i].pos[0] * self.real_ratio,
-                                self.points[i].pos[1] * self.real_ratio]
+                self.l_data += self.points_to_real((f, i))
                 if f in self.lines[i]:
-                    self.lc_data += 2*self.special_line_color_2
+                    self.lc_data += 2 * self.special_line_color_2
                 else:
-                    self.lc_data += 2*self.special_line_color_1
+                    self.lc_data += 2 * self.special_line_color_1
+        for tri in self.triangles:
+            self.tr_data += self.points_to_real(tri)
+            self.trc_data += 3 * gen_color(tri, self.seed)
 
-    def draw(self, lines=False, colored=False):
+    def draw(self, lines=False, colored=False, triangles=False):
         pyglet.graphics.draw(len(self.points), pyglet.gl.GL_POINTS,
                              ('v2f', self.p_data), ('c3B', self.pc_data))
         if lines:
@@ -200,27 +257,55 @@ class Field:
             else:
                 pyglet.graphics.draw(len(self.l_data)//2, pyglet.gl.GL_LINES,
                                      ('v2f', self.l_data), ('c3B', self.lc1_data))
+        if triangles:
+            pyglet.graphics.draw(len(self.tr_data)//2, pyglet.gl.GL_TRIANGLES,
+                                 ('v2f', self.tr_data), ('c3B', self.trc_data))
+
+
+# here are various functions that I find make interesting interactions
+def repel(divider):
+    return lambda x: 1/(divider * x)
+
+
+def repel_t(divider):
+    # non-asymptotic repelling
+    return lambda x: math.atan(x)/divider
+
+
+def hold(distance, divider):
+    return lambda x: (distance - x)/divider
 
 
 class GUI(pyglet.window.Window):
 
     def __init__(self):
         title = 'point interactions'
-        config = pyglet.gl.Config(double_buffer=False)
-        super(GUI, self).__init__(caption=title, fullscreen=True, config=config, vsync=0)
+        config = pyglet.gl.Config(double_buffer=True)
+        super(GUI, self).__init__(caption=title, fullscreen=True, config=config, vsync=True)
         self.fps_display = pyglet.window.FPSDisplay(window=self)
+        self.scsz = self.get_size()
+        pyglet.gl.glReadBuffer(pyglet.gl.GL_FRONT)
+        pyglet.gl.glDrawBuffer(pyglet.gl.GL_BACK)
 
-        # self.dots = Field(100, 100, 2, 0.9, 1, lambda x: 1/(4*x), self.get_size(), init_vel=0)
-        self.dots = Field(100, 100, 4, 0.9, 1, lambda x: (10 - x) / 5, self.get_size(), init_vel=0)
+        # field parameters I find interesting
+        # self.dots = Field(100, 100, 2, 0.9, 1, (repel(4),), self.get_size(), init_vel=0)
+        self.dots = Field(100, 100, 5, 0.9, 1, (hold(10, 5),), self.get_size(), symmetric=True)
+        # self.dots = Field(100, 100, 4, 0.9, 1, (repel(-100),), self.get_size())
+        # self.dots = Field(100, 10, 4, 0.9, 1, (repel_t(-10),), self.get_size())
+        # self.dots = Field(100, 100, 4, 0.9, 1, (hold(6, 5), hold(12, 5)), self.scsz, symmetric=False)
 
         self.background_color = (0, 0, 0)  # set the background color hex
         self.point_size = 2  # set the point size in pixels
+        self.line_width = 1  # set the width of the lines in pixels
+
+        self.on_start()
 
         self.pause = False
         self.stain = False
         self.fps_show = False
         self.line_show = False
         self.line_colors = False
+        self.triangle_show = False
         self.slow_down = 1
 
     def on_key_press(self, symbol, modifiers):
@@ -229,7 +314,7 @@ class GUI(pyglet.window.Window):
             self.pause = not self.pause
         elif symbol == key.N:
             # press N to go forward one frame
-            self.dots.update()
+            self.dots.update(num=self.slow_down)
         elif symbol == key.S:
             # press S to toggle stain
             self.stain = not self.stain
@@ -248,6 +333,12 @@ class GUI(pyglet.window.Window):
         elif symbol == key.W:
             # press W to make the animation go slow
             self.slow_down = 10 - self.slow_down
+        elif symbol == key.T:
+            # press T to show any triangles that hae formed
+            self.triangle_show = not self.triangle_show
+        elif symbol == key.B:
+            # press B to re-seed the triangles colors
+            self.dots.reseed()
         elif symbol == key.ESCAPE:
             # press escape to exit
             pyglet.app.exit()
@@ -269,13 +360,16 @@ class GUI(pyglet.window.Window):
         pyglet.gl.glClearColor(self.background_color[0]/255, self.background_color[1]/255,
                                self.background_color[2]/255, 1.0)
         pyglet.gl.glPointSize(self.point_size)
+        pyglet.gl.glLineWidth(self.line_width)
 
     def update(self, dt):
         if not self.pause:
             self.dots.update(num=self.slow_down)
         if not self.stain:
             pyglet.gl.glClear(pyglet.gl.GL_COLOR_BUFFER_BIT)
-        self.dots.draw(lines=self.line_show, colored=self.line_colors)
+        else:
+            pyglet.gl.glCopyPixels(0, 0, self.scsz[0], self.scsz[1], pyglet.gl.GL_COLOR)
+        self.dots.draw(lines=self.line_show, colored=self.line_colors, triangles=self.triangle_show)
         if self.fps_show:
             self.fps_display.draw()
 
