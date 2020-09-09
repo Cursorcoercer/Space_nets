@@ -53,6 +53,7 @@ point_key = 'P'  # the key that toggles point visibility
 line_key = 'L'  # the key that toggles line visibility
 triangle_key = 'T'  # the key that toggles triangle visibility
 reseed_key = 'B'  # the key that re-randomizes any randomly chosen colors
+color_fade_key = 'C'  # the key that switches the color mode from static to fade
 capture_key = 'K'  # the key that captures what's on screen into an image
 path_name = 'screenshots'  # the name of the directory to save screenshots to
 quit_key = 'ESCAPE'  # the key that closes the window

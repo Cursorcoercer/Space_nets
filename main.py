@@ -3,6 +3,7 @@ import pyglet
 from pyglet.window import key
 import random
 import math
+import time
 import os
 
 
@@ -37,10 +38,13 @@ def is_color(lis):
 
 
 def get_new_file_name(path):
-    n = 0
-    while os.path.exists(os.path.join(path, str(n)+".png")):
+    n = 1
+    time_stamp = time.strftime("%Y%m%d_%H%M%S")
+    file_name = time_stamp + ".png"
+    while os.path.exists(os.path.join(path, file_name)):
         n += 1
-    return os.path.join(path, str(n)+".png")
+        file_name = time_stamp + "%s.png" % n
+    return os.path.join(path, file_name)
 
 
 class Point:
@@ -82,14 +86,19 @@ class Color:
     def reseed(self):
         self.seed = random.random()
 
-    def get_color(self, element):
+    def get_color(self, element, number=1, seed_add=0):
+        if number > 1:
+            color_list = tuple()
+            for f in range(int(number)):
+                color_list += self.get_color(element, seed_add=f)
+            return color_list
         if self.color_type is None:  # random color
-            t_rand = hash((element, self.seed))
+            t_rand = hash((element, self.seed+seed_add))
             return t_rand % 256, (t_rand//256) % 256, ((t_rand//256)//256) % 256
         if self.color_type == 0:  # single color
             return self.core
         if self.color_type == 1:  # color palette
-            t_rand = hash((element, self.seed))
+            t_rand = hash((element, self.seed+seed_add))
             return self.core[t_rand % len(self.core)]
 
 
@@ -118,6 +127,7 @@ class Field:
         self.lc_data = []
         self.tr_data = []
         self.trc_data = []
+        self.color_fade = False
         self.grabbed = None
         self.last_pos = (0, 0)
         self.point_color = Color(params.point_color)
@@ -247,6 +257,9 @@ class Field:
         self.line_color.seed = random.random()
         self.triangle_color.seed = random.random()
 
+    def change_fade(self):
+        self.color_fade = not self.color_fade
+
     def update(self, num=1):
         # first we update the velocities of the points based on their forces
         self.update_num = (self.update_num + 1) % num
@@ -292,10 +305,16 @@ class Field:
             self.pc_data += self.point_color.get_color(f)
             for i in self.lines[f]:
                 self.l_data += self.points_to_real((f, i))
-                self.lc_data += 2 * self.line_color.get_color(tuple(sorted((f, i))))
+                if self.color_fade:
+                    self.lc_data += self.line_color.get_color(tuple(sorted((f, i))), number=2)
+                else:
+                    self.lc_data += 2 * self.line_color.get_color(tuple(sorted((f, i))))
         for tri in self.triangles:
             self.tr_data += self.points_to_real(tri)
-            self.trc_data += 3 * self.triangle_color.get_color(tri)
+            if self.color_fade:
+                self.trc_data += self.triangle_color.get_color(tri, number=3)
+            else:
+                self.trc_data += 3 * self.triangle_color.get_color(tri)
 
     def draw(self, points=True, lines=False, triangles=False):
         if triangles:
@@ -378,9 +397,11 @@ class GUI(pyglet.window.Window):
             self.line_show = not self.line_show
         elif key_str == params.triangle_key:  # show any triangles that hae formed
             self.triangle_show = not self.triangle_show
-        elif key_str == params.reseed_key:  # re-seed the triangles colors
+        elif key_str == params.reseed_key:  # re-seed the random colors
             self.dots.reseed()
-        elif key_str == params.capture_key:  # re-seed the triangles colors
+        elif key_str == params.color_fade_key:  # re-seed the random colors
+            self.dots.change_fade()
+        elif key_str == params.capture_key:  # capture the image on screen into a file
             pyglet.image.get_buffer_manager().get_color_buffer().save(get_new_file_name(params.path_name))
         elif key_str == params.quit_key:  # exit
             self.close()
