@@ -292,10 +292,7 @@ class Field:
             self.pc_data += self.point_color.get_color(f)
             for i in self.lines[f]:
                 self.l_data += self.points_to_real((f, i))
-                if f in self.lines[i]:
-                    self.lc_data += 2 * self.line_color.get_color(tuple(sorted((f, i))))
-                else:
-                    self.lc_data += 2 * self.line_color.get_color((f, i))
+                self.lc_data += 2 * self.line_color.get_color(tuple(sorted((f, i))))
         for tri in self.triangles:
             self.tr_data += self.points_to_real(tri)
             self.trc_data += 3 * self.triangle_color.get_color(tri)
