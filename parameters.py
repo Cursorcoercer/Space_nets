@@ -64,13 +64,20 @@ mouse_button = 'RIGHT'  # the mouse button that allows you to manipulate the dot
 # use these to alter colors/color palettes
 # example color (255, 0, 0)
 # example palette ((255, 0, 0), (0, 255, 0), (0, 0, 255))
+# example color map r"path\folder\file_name.png"
+# example k means r"path\folder\file_name.png", 5
 # or set to None for random colors
 background_color = (0, 0, 0)  # the color of the background, must be one color
 point_color = (255, 255, 255)  # the color of the points
-line_color = ((150, 255, 255), (150, 150, 255), (150, 255, 150))  # the color of the lines
-triangle_color = None  # the color of the triangles
+line_color = None  # the color of the lines
+triangle_color = ((255, 176, 176), (254, 113, 113), (51, 93, 45), (126, 160, 77))  # the color of the triangles
 
 
 # ----- other aesthetics -----
 point_size = 2  # set the size of the points in pixels
 line_width = 1  # set the width of the lines in pixels
+
+# these are parameters that help k-means run faster, probably don't worry about them
+pre_means_sorting_smoothness = 8  # a constant to smooth out the step sort
+pre_means_clustering = 100  # a higher number yields more accurate k-means results at the expense of time
+

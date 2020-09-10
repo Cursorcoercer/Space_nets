@@ -1,6 +1,7 @@
 import parameters as params
 import pyglet
 from pyglet.window import key
+import colorsys
 import random
 import math
 import time
@@ -8,8 +9,11 @@ import os
 
 
 def dist_sq(coords_1, coords_2):
-    # find the distance between two coordinates
-    return (coords_1[0] - coords_2[0])**2 + (coords_1[1] - coords_2[1])**2
+    # find the distance squared between two coordinates
+    dist = 0
+    for f in range(len(coords_1)):
+        dist += (coords_1[f] - coords_2[f])**2
+    return dist
 
 
 def not_part_of_triplet(lis, elem):
@@ -47,6 +51,84 @@ def get_new_file_name(path):
     return os.path.join(path, file_name)
 
 
+def chunks(lst, n):
+    # Yield successive n-sized chunks from lst
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
+
+def random_color():
+    # return a random color
+    return random.randrange(256), random.randrange(256), random.randrange(256)
+
+
+def color_avg(colors):
+    # return an average of the colors given
+    if not colors:
+        # return a random color if no colors are passed
+        return random_color()
+    f_len = len(colors[0])
+    avg = f_len * [0]
+    for f in range(f_len):
+        for color in colors:
+            avg[f] += color[f]
+        avg[f] = int(avg[f] / len(colors))
+    return tuple(avg)
+
+
+def step(r, g, b, repetitions=1):
+    lum = math.sqrt(0.241 * r + 0.691 * g + 0.068 * b)
+    h, s, v = colorsys.rgb_to_hsv(r, g, b)
+    h2 = int(h * repetitions)
+    lum2 = int(lum * repetitions)
+    v2 = int(v * repetitions)
+    if h2 % 2 == 1:
+        v2 = repetitions - v2
+        lum2 = repetitions - lum2
+    return h2, lum2, v2
+
+
+def k_means(path, k):
+    # return k mean colors from an image
+    form = "RGB"
+    f_len = len(form)
+    if not os.path.exists(path):
+        raise ValueError("Invalid image path")
+    image = pyglet.image.load(path)
+    pitch = image.width * f_len
+    pixels = list(tuple(c) for c in chunks(image.get_data(form, pitch), f_len))
+    # a couple of preliminary checks for special cases
+    if k == len(pixels):
+        # the number given is the number of pixels
+        return pixels
+    pixel_set = list(set(pixels))
+    if k == len(pixel_set):
+        # k is equal to the number of unique pixels
+        return pixel_set
+    # do it the hard way
+    # but first let's parse down our pixel list so as to be practical
+    pixels.sort(key=lambda x: step(x[0], x[1], x[2], params.pre_means_sorting_smoothness))
+    chunk_size = len(pixels) // params.pre_means_clustering
+    new_pixels = []
+    for f in range(0, len(pixels), chunk_size):
+        new_pixels.append(color_avg(pixels[f:f + chunk_size]))
+    clusters = len(new_pixels) * [0]
+    old_means = []
+    means = []
+    for f in range(k):
+        old_means.append((-1, -1, -1))
+        means.append(random_color())
+    while old_means != means:
+        old_means = list(means)
+        # group the clusters
+        for f in range(len(clusters)):
+            clusters[f] = min(range(k), key=lambda x: dist_sq(means[x], new_pixels[f]))
+        # adjust the means
+        for f in range(k):
+            means[f] = color_avg(list(new_pixels[g] for g in range(len(new_pixels)) if clusters[g] == f))
+    return means
+
+
 class Point:
 
     def __init__(self, position, velocity):
@@ -69,25 +151,48 @@ class Point:
 class Color:
 
     def __init__(self, color):
-        self.core = color
+        self.data = color
         self.seed = random.random()
-        self.color_type = self.core_type()
+        self.image = None
+        self.pixels = None
+        self.color_format = 'RGB'
+        self.f_len = len(self.color_format)
+        self.color_type = self.data_type()
 
-    def core_type(self):
-        if self.core is None:
+    def data_type(self):
+        if self.data is None:
             return None  # random colors
-        if is_color(self.core):
+        if type(self.data) == str:
+            if not os.path.exists(self.data):
+                raise ValueError("Invalid image path")
+            self.image = pyglet.image.load(self.data)
+            pitch = self.image.width * self.f_len
+            self.pixels = self.image.get_data(self.color_format, pitch)
+            return 2  # colors from an image
+        if len(self.data) == 2:
+            if type(self.data[0]) == int and type(self.data[1]) == str:
+                self.data = self.data[::-1]
+            if type(self.data[0]) == str or type(self.data[1]) == int:
+                self.data = k_means(*self.data)
+                return 1  # we turned an image into a color palette
+        if is_color(self.data):
             return 0  # single color
-        for c in self.core:
+        for c in self.data:
             if not is_color(c):
                 raise ValueError("Invalid color value")
         return 1  # color palette
+
+    def get_pixel(self, x, y):
+        pos = self.image.width * y * self.f_len + x * self.f_len
+        return self.pixels[pos:pos + self.f_len]
 
     def reseed(self):
         self.seed = random.random()
 
     def get_color(self, element, number=1, seed_add=0):
         if number > 1:
+            # to get multiple different colors for the same element
+            # do not use with type 2 data
             color_list = tuple()
             for f in range(int(number)):
                 color_list += self.get_color(element, seed_add=f)
@@ -96,10 +201,16 @@ class Color:
             t_rand = hash((element, self.seed+seed_add))
             return t_rand % 256, (t_rand//256) % 256, ((t_rand//256)//256) % 256
         if self.color_type == 0:  # single color
-            return self.core
+            return self.data
         if self.color_type == 1:  # color palette
             t_rand = hash((element, self.seed+seed_add))
-            return self.core[t_rand % len(self.core)]
+            return self.data[t_rand % len(self.data)]
+        if self.color_type == 2:  # color map
+            # for this the element should be a tuple of two floats from 0 to 1
+            # indicating where on the map to draw the color from
+            x = int(element[0] * (self.image.width - 1))
+            y = int(element[1] * (self.image.height - 1))
+            return self.get_pixel(x, y)
 
 
 class Field:
@@ -195,6 +306,8 @@ class Field:
             self.last_pos = position
         self.points[self.grabbed].pos[0] = self.last_pos[0] / self.real_ratio
         self.points[self.grabbed].pos[1] = self.last_pos[1] / self.real_ratio
+        if self.out_of_bounds(self.points[self.grabbed].pos):
+            self.handle_out_of_bounds_point(self.grabbed)
         if velocity is not None:
             self.points[self.grabbed].vel[0] = velocity[0] / self.real_ratio
             self.points[self.grabbed].vel[1] = velocity[1] / self.real_ratio
@@ -203,6 +316,11 @@ class Field:
         # return a boolean tuple with out of bounds for horizontal and vertical
         return (position[0] < 0 or self.height * self.aspect_ratio < position[0],
                 position[1] < 0 or self.height < position[1])
+
+    def handle_out_of_bounds_point(self, point_num):
+        self.points[point_num].vel = [0, 0]
+        self.points[point_num].pos[0] = min(max(0, self.points[point_num].pos[0]), self.aspect_ratio * self.height)
+        self.points[point_num].pos[1] = min(max(0, self.points[point_num].pos[1]), self.height)
 
     def update_vel(self):
         # forces from other points
@@ -271,9 +389,7 @@ class Field:
             self.points[f].move(div=num)
             # then we account for any points that somehow slipped out of bounds
             if any(self.out_of_bounds(self.points[f].pos)):
-                self.points[f].vel = [0, 0]
-                self.points[f].pos[0] = min(max(0, self.points[f].pos[0]), self.aspect_ratio * self.height)
-                self.points[f].pos[1] = min(max(0, self.points[f].pos[1]), self.height)
+                self.handle_out_of_bounds_point(f)
         # then we update the p_data for the vertex buffer
         self.move_grabbed()
         self.prepare_data()
@@ -282,6 +398,24 @@ class Field:
         self.scsz = screen_size
         self.aspect_ratio = self.scsz[0]/self.scsz[1]  # aspect ratio of screen
         self.real_ratio = self.scsz[1]/self.height  # ratio of actual height to screen height
+
+    def point_to_float(self, point_num):
+        # converts a point to a float 0 - 1
+        x = self.points[point_num].pos[0] / (self.aspect_ratio * self.height)
+        y = self.points[point_num].pos[1] / self.height
+        return x, y
+
+    def avg_points_to_float(self, point_nums):
+        # converts a list of point indices to their average position as a float 0 - 1
+        x = 0
+        y = 0
+        for num in point_nums:
+            coords = self.point_to_float(num)
+            x += coords[0]
+            y += coords[1]
+        x /= len(point_nums)
+        y /= len(point_nums)
+        return x, y
 
     def points_to_real(self, point_nums):
         # converts a list of point indices to their corresponding real coords as a flattened list
@@ -302,19 +436,36 @@ class Field:
         self.trc_data = []
         for f in range(len(self.points)):
             self.p_data += self.points_to_real((f,))
-            self.pc_data += self.point_color.get_color(f)
+            if self.point_color.color_type == 2:
+                self.pc_data += self.point_color.get_color(self.point_to_float(f))
+            else:
+                self.pc_data += self.point_color.get_color(f)
             for i in self.lines[f]:
                 self.l_data += self.points_to_real((f, i))
-                if self.color_fade:
-                    self.lc_data += self.line_color.get_color(tuple(sorted((f, i))), number=2)
+                if self.line_color.color_type == 2:
+                    if self.color_fade:
+                        self.lc_data += self.line_color.get_color(self.point_to_float(f))
+                        self.lc_data += self.line_color.get_color(self.point_to_float(i))
+                    else:
+                        self.lc_data += 2 * self.line_color.get_color(self.avg_points_to_float((f, i)))
                 else:
-                    self.lc_data += 2 * self.line_color.get_color(tuple(sorted((f, i))))
+                    if self.color_fade:
+                        self.lc_data += self.line_color.get_color(tuple(sorted((f, i))), number=2)
+                    else:
+                        self.lc_data += 2 * self.line_color.get_color(tuple(sorted((f, i))))
         for tri in self.triangles:
             self.tr_data += self.points_to_real(tri)
-            if self.color_fade:
-                self.trc_data += self.triangle_color.get_color(tri, number=3)
+            if self.triangle_color.color_type == 2:
+                if self.color_fade:
+                    for t in tri:
+                        self.trc_data += self.triangle_color.get_color(self.point_to_float(t))
+                else:
+                    self.trc_data += 3 * self.triangle_color.get_color(self.avg_points_to_float(tri))
             else:
-                self.trc_data += 3 * self.triangle_color.get_color(tri)
+                if self.color_fade:
+                    self.trc_data += self.triangle_color.get_color(tri, number=3)
+                else:
+                    self.trc_data += 3 * self.triangle_color.get_color(tri)
 
     def draw(self, points=True, lines=False, triangles=False):
         if triangles:
@@ -428,6 +579,7 @@ class GUI(pyglet.window.Window):
         if not self.stain:
             pyglet.gl.glClear(pyglet.gl.GL_COLOR_BUFFER_BIT)
         else:
+            # copy front buffer to back buffer for reliable staining
             pyglet.gl.glCopyPixels(0, 0, self.width, self.height, pyglet.gl.GL_COLOR)
         self.dots.draw(points=self.point_show, lines=self.line_show, triangles=self.triangle_show)
         if self.fps_show:
