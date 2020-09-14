@@ -307,6 +307,7 @@ class Field:
         else:
             # default to toggle
             self.color_fade = not self.color_fade
+        self.prepare_data()
 
     def set_grabbed(self, coords):
         if coords is None:
