@@ -225,6 +225,8 @@ class Field:
         self.air = air_resistance
         self.bounce = bounciness
         self.funcs = funcs
+        if type(self.funcs) != tuple:
+            self.funcs = (self.funcs,)
         self.scsz = screen_size
         self.symmetric_forces = symmetric
         self.init_vel = init_vel
@@ -559,22 +561,23 @@ class GUI(pyglet.window.Window):
 
         # set parameters
         if params.behavior_preset == "mesh":
-            self.dots = Field(100, 100, 2, 0.9, 1, (lambda x: 1/3/x,), self.get_size())
+            self.dots = Field(100, 100, 2, 0.9, 1, lambda x: 1/3/x, self.get_size())
         elif params.behavior_preset == "blob":
-            self.dots = Field(100, 100, 4, 0.9, 1, (lambda x: 2-x/5,), self.get_size())
+            self.dots = Field(100, 100, 4, 0.9, 1, lambda x: 2-x/5, self.get_size())
         elif params.behavior_preset == "shrink":
-            self.dots = Field(100, 10, 5, 0.9, 1, (lambda x: -math.atan(x)/10,), self.get_size())
+            self.dots = Field(100, 10, 5, 0.9, 1, lambda x: -math.atan(x)/10, self.get_size())
         elif params.behavior_preset == "fireworks":
-            self.dots = Field(100, 100, 2, 0.9, 1, (lambda x: -1/x/50,), self.get_size())
+            self.dots = Field(100, 100, 2, 0.9, 1, lambda x: -1/x/50, self.get_size())
         elif params.behavior_preset == "amoeba":
             self.dots = Field(100, 100, 4, 0.9, 1, (lambda x: 1.2-x/5, lambda x: 2.4-x/5),
                               self.get_size(), symmetric=False)
+        elif params.behavior_preset == "gas":
+            self.dots = Field(100, 100, 4, 1, 1, lambda x: 0, self.get_size(), init_vel=1)
         else:
-            if type(params.point_function) != tuple:
-                params.point_function = (params.point_function,)
             self.dots = Field(params.number_of_points, 100, params.point_connections,
                               params.air_resistance, params.bounciness, params.point_function,
-                              self.get_size(), symmetric=params.symmetric_forces)
+                              self.get_size(), symmetric=params.symmetric_forces,
+                              init_vel=params.init_velocity)
 
         pyglet.gl.glClearColor(params.background_color[0]/255, params.background_color[1]/255,
                                params.background_color[2]/255, 1.0)

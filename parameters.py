@@ -7,13 +7,14 @@ import math
 # first you can choose between some preset behaviors
 # if you'd like to set your own, set this value to None
 # if this is not None it invalidates everything between here and the control settings
-# possible presets: "mesh", "blob", "shrink", "fireworks", "amoeba"
-behavior_preset = "blob"
+# possible presets: "mesh", "blob", "shrink", "fireworks", "amoeba", "gas"
+behavior_preset = "gas"
 
 number_of_points = 100  # the number of points
 point_connections = 4  # the number of connections each point will make
 air_resistance = 0.9  # the amount of air resistance, 1 is no resistance, 0 is no movement
 bounciness = 1  # how bouncy the walls are, 1 conserves velocity, 0 is no bounce
+init_velocity = 1  # the velocity that the points have to start out
 symmetric_forces = True  # determines whether or not point forces are symmetric True or False
 
 
@@ -48,7 +49,7 @@ stain_key = 'S'  # the key that toggles whether or not the screen gets cleared
 fps_key = 'F'  # the key that toggles the on-screen fps
 reset_key = 'R'  # the key that resets all points to random positions
 slow_key = 'W'  # the key that toggles slow mode
-slow_down = 10  # how many times slower slow mode is than normal
+slow_down = 20  # how many times slower slow mode is than normal
 point_key = 'P'  # the key that toggles point visibility
 line_key = 'L'  # the key that toggles line visibility
 triangle_key = 'T'  # the key that toggles triangle visibility
