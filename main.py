@@ -1,6 +1,7 @@
 import parameters as params
+import numpy as np
+from scipy import spatial
 import pyglet
-from pyglet.window import key
 import colorsys
 import random
 import math
@@ -30,6 +31,17 @@ def not_part_of_triplet(lis, elem):
     return True
 
 
+def z_cross(vector1, vector2):
+    # return the z component of a cross product
+    return vector1[0] * vector2[1] - vector1[1] * vector2[0]
+
+
+def same_sign_cross(vector, bound1, bound2):
+    # determine if two vectors produce the same sign on the z component of a 3d cross product
+    # in lay terms check if vector lies between bounds (sort of)
+    return 0 > z_cross(vector, bound1) * z_cross(vector, bound2)
+
+
 def is_color(lis):
     if len(lis) != 3:
         return False
@@ -55,6 +67,14 @@ def chunks(lst, n):
     # Yield successive n-sized chunks from lst
     for i in range(0, len(lst), n):
         yield lst[i:i + n]
+
+
+def stutter(lis, n):
+    # repeat a list on a repetition of n
+    new_lis = []
+    for f in chunks(lis, n):
+        new_lis += 2 * f
+    return new_lis
 
 
 def random_color():
@@ -127,25 +147,6 @@ def k_means(path, k):
         for f in range(k):
             means[f] = color_avg(list(new_pixels[g] for g in range(len(new_pixels)) if clusters[g] == f))
     return means
-
-
-class Point:
-
-    def __init__(self, position, velocity):
-        self.pos = position
-        self.vel = velocity
-
-    def move(self, div=1):
-        self.pos[0] += self.vel[0] / div
-        self.pos[1] += self.vel[1] / div
-
-    def pseudo_move(self):
-        # don't actually move, but return where you would move to
-        return self.pos[0] + self.vel[0], self.pos[1] + self.vel[1]
-
-    def distance(self, other):
-        # find the distance between two points
-        return dist_sq(self.pos, other.pos)
 
 
 class Color:
@@ -229,8 +230,17 @@ class Field:
         self.aspect_ratio = self.scsz[0]/self.scsz[1]  # aspect ratio of screen
         self.real_ratio = self.scsz[1]/self.height  # ratio of actual height to screen height
         self.update_num = 0
-        self.points = []
-        self.lines = []
+        self.positions = np.zeros((self.num, 2))
+        self.velocities = np.zeros((self.num, 2))
+        self.kd_tree = spatial.cKDTree(self.positions)
+        self.lines = np.zeros((self.num, self.feel_num))
+        self.sym_lines = [set() for f in range(self.num)]
+        self.line_set = set()
+        self.rect_lines = bool(params.line_width > 10)
+        if self.rect_lines:
+            self.line_type = pyglet.gl.GL_QUADS
+        else:
+            self.line_type = pyglet.gl.GL_LINES
         self.triangles = []
         self.p_data = []
         self.pc_data = []
@@ -239,6 +249,8 @@ class Field:
         self.tr_data = []
         self.trc_data = []
         self.color_fade = False
+        self.triangle_show = False
+        self.delaunay_tri = False
         self.grabbed = None
         self.last_pos = (0, 0)
         self.point_color = Color(params.point_color)
@@ -246,149 +258,186 @@ class Field:
         self.triangle_color = Color(params.triangle_color)
         self.reset()
 
-    def new_point(self):
-        # generates a random new point
-        if self.init_vel:
-            # generates a random angle or the velocity to be at
-            rand_angle = math.tau * random.random()
-            rand_vel = [self.init_vel * math.cos(rand_angle), self.init_vel * math.sin(rand_angle)]
-        else:
-            rand_vel = [0, 0]
-        rand_pos = [self.height * self.aspect_ratio * random.random(), self.height * random.random()]
-        return Point(rand_pos, rand_vel)
-
     def reset(self):
         # generates all particles within the field of the screen
         # origin as bottom left and height as coordinate of top
-        self.points = []
         for f in range(self.num):
-            self.points.append(self.new_point())
-            self.lines.append([])
+            self.positions[f] = [self.height * self.aspect_ratio * random.random(), self.height * random.random()]
+            if self.init_vel:
+                # generates a random angle for the velocity to be at
+                rand_angle = math.tau * random.random()
+                self.velocities[f] = [self.init_vel * math.cos(rand_angle), self.init_vel * math.sin(rand_angle)]
         # get the lines right immediately
-        for f in range(len(self.points)):
+        self.sym_lines = [set() for f in range(self.num)]
+        self.line_set = set()
+        for f in range(self.num):
             closest = self.find_closest(f)
-            self.lines[f] = []
-            for c in closest:
-                self.lines[f].append(c[0])
+            self.lines[f] = closest[1]
+            self.sym_lines[f].update(closest[1])
+            for c in closest[1]:
+                c = int(c)
+                self.sym_lines[c].add(f)
+                self.line_set.add(tuple(sorted((f, c))))
         self.triangles = self.find_triangles()
         self.prepare_data()
 
-    def find_closest(self, num):
-        closest = []
-        for p in range(len(self.points)):
-            if p == num:
-                continue
-            if len(closest) < self.feel_num:
-                closest.append((p, self.points[p].distance(self.points[num])))
-                if len(closest) == self.feel_num:
-                    closest.sort(key=lambda x: x[1])
-            else:
-                temp_dist = self.points[p].distance(self.points[num])
-                if temp_dist < closest[-1][1]:
-                    closest[-1] = (p, temp_dist)
-                    closest.sort(key=lambda x: x[1])
-        return closest
+    def set_tri(self, val=None):
+        if val is not None:
+            self.triangle_show = val
+        else:
+            # default to toggle
+            self.triangle_show = not self.triangle_show
+        if self.triangle_show:
+            self.triangles = self.find_triangles()
+            self.prepare_data()
 
-    def closest_point(self, coords):
-        return min(range(len(self.points)), key=lambda x: dist_sq(self.points[x].pos, coords))
+    def set_del(self, val=None):
+        if val is not None:
+            self.delaunay_tri = val
+        else:
+            # default to toggle
+            self.delaunay_tri = not self.delaunay_tri
+        self.triangles = self.find_triangles()
+        self.prepare_data()
+
+    def set_fade(self, val=None):
+        if val is not None:
+            self.color_fade = val
+        else:
+            # default to toggle
+            self.color_fade = not self.color_fade
 
     def set_grabbed(self, coords):
         if coords is None:
             self.grabbed = None
         else:
             real_coords = (coords[0] / self.real_ratio, coords[1] / self.real_ratio)
-            self.grabbed = self.closest_point(real_coords)
+            self.grabbed = self.kd_tree.query(real_coords)[1]
 
     def move_grabbed(self, position=None, velocity=None):
         if self.grabbed is None:
             return None
         if position is not None:
-            self.last_pos = position
-        self.points[self.grabbed].pos[0] = self.last_pos[0] / self.real_ratio
-        self.points[self.grabbed].pos[1] = self.last_pos[1] / self.real_ratio
-        if self.out_of_bounds(self.points[self.grabbed].pos):
+            self.last_pos = np.array(position)
+        self.positions[self.grabbed] = self.last_pos / self.real_ratio
+        if any(self.out_of_bounds(self.positions[self.grabbed])):
             self.handle_out_of_bounds_point(self.grabbed)
         if velocity is not None:
-            self.points[self.grabbed].vel[0] = velocity[0] / self.real_ratio
-            self.points[self.grabbed].vel[1] = velocity[1] / self.real_ratio
+            self.velocities[self.grabbed] = np.array(velocity) / self.real_ratio
 
     def out_of_bounds(self, position):
-        # return a boolean tuple with out of bounds for horizontal and vertical
+        # return whether a point is out of bounds or not
         return (position[0] < 0 or self.height * self.aspect_ratio < position[0],
                 position[1] < 0 or self.height < position[1])
 
     def handle_out_of_bounds_point(self, point_num):
-        self.points[point_num].vel = [0, 0]
-        self.points[point_num].pos[0] = min(max(0, self.points[point_num].pos[0]), self.aspect_ratio * self.height)
-        self.points[point_num].pos[1] = min(max(0, self.points[point_num].pos[1]), self.height)
+        self.velocities[point_num] = [0, 0]
+        self.positions[point_num][0] = min(max(0, self.positions[point_num][0]), self.aspect_ratio * self.height)
+        self.positions[point_num][1] = min(max(0, self.positions[point_num][1]), self.height)
+
+    def find_closest(self, num):
+        plus_one = self.kd_tree.query(self.positions[num], k=self.feel_num+1)
+        for f in range(len(plus_one[1])):
+            if num == plus_one[1][f]:
+                return np.delete(plus_one, f, 1)
+        return np.delete(plus_one, -1, 1)
+
+    def move_point(self, point_num, extra=np.zeros(2), div=1):
+        return self.positions[point_num] + (self.velocities[point_num] / div) + extra
 
     def update_vel(self):
+        # update the velocities of all the points
         # forces from other points
-        for f in range(len(self.points)):
+        self.sym_lines = [set() for f in range(self.num)]
+        self.line_set = set()
+        for f in range(self.num):
             closest = self.find_closest(f)
-            self.lines[f] = []
-            for c in closest:
-                self.lines[f].append(c[0])
-                act_dist = math.sqrt(c[1])
-                if not act_dist:
+            self.lines[f] = closest[1]
+            self.sym_lines[f].update(closest[1])
+            for c in range(self.feel_num):
+                p = int(closest[1][c])
+                act_dist = closest[0][c]
+                self.sym_lines[p].add(f)
+                self.line_set.add(tuple(sorted((f, p))))
+                if act_dist == 0:
                     # points are on top of each other
                     continue
                 force = self.funcs[f % len(self.funcs)](act_dist)
-                x_force = force * (self.points[f].pos[0] - self.points[c[0]].pos[0]) / act_dist
-                y_force = force * (self.points[f].pos[1] - self.points[c[0]].pos[1]) / act_dist
-                self.points[f].vel[0] += x_force
-                self.points[f].vel[1] += y_force
+                self.velocities[f] += force * (self.positions[f] - self.positions[p]) / act_dist
                 if self.symmetric_forces:
                     # this makes forces symmetric, but obeying newton is for nerds
-                    self.points[c[0]].vel[0] -= x_force
-                    self.points[c[0]].vel[1] -= y_force
+                    self.velocities[p] -= force * (self.positions[f] - self.positions[p]) / act_dist
         # forces from the bounds
-        for f in range(len(self.points)):
-            pot_pos = self.points[f].pseudo_move()
-            out_x, out_y = self.out_of_bounds(pot_pos)
+        for f in range(self.num):
+            out_x, out_y = self.out_of_bounds(self.move_point(f))
             if out_x:
-                self.points[f].vel[0] *= -self.bounce
-                self.points[f].vel[1] *= self.bounce
+                self.velocities[f][0] *= -1
+                self.velocities[f] *= self.bounce
             if out_y:
-                self.points[f].vel[0] *= self.bounce
-                self.points[f].vel[1] *= -self.bounce
+                self.velocities[f][1] *= -1
+                self.velocities[f] *= self.bounce
             # then we account for air resistance
-            self.points[f].vel[0] *= self.air
-            self.points[f].vel[1] *= self.air
+            self.velocities[f] *= self.air
+
+    def not_obstructed(self, points):
+        # determines whether a convex polygon is obstructed by any line
+        for p in range(len(points)):
+            o1 = (p - 1) % len(points)
+            o2 = (p + 1) % len(points)
+            v1 = self.positions[points[o1]] - self.positions[points[p]]
+            v2 = self.positions[points[o2]] - self.positions[points[p]]
+            for f in self.sym_lines[points[p]]:
+                f = int(f)
+                if f in points:
+                    if len(points) > 3 and (points.index(f) not in (o1, o2)):
+                        return False
+                    else:
+                        continue
+                to_test = self.positions[f] - self.positions[points[p]]
+                if same_sign_cross(to_test, v1, v2):
+                    if not same_sign_cross(v2, v1, to_test):
+                        return False
+        return True
 
     def find_triangles(self):
-        all_tri = set()
-        for p in range(len(self.points)):
-            p_tri = set()
-            neighbors = set(self.lines[p] + [f for f in range(len(self.points)) if p in self.lines[f]])
-            for c in neighbors:
-                for c2 in self.lines[c]:
-                    if c2 in neighbors:
-                        p_tri.add(tuple(sorted((c, c2))))
-            for tri in p_tri:
-                if not_part_of_triplet(p_tri, tri):
-                    all_tri.add(tuple(sorted((p, tri[0], tri[1]))))
-        return list(all_tri)
+        # return a list of all triangle tuples
+        if self.delaunay_tri:
+            good_tri = []
+            del_tris = spatial.Delaunay(self.positions)
+            for tri in del_tris.simplices:
+                good_tri.append(tuple(sorted(tri)))
+            return good_tri
+        else:
+            all_tri = set()
+            good_tri = []
+            for p in range(self.num):
+                # neighbors = set(f for f in range(self.num) if (p in self.lines[f] or f in self.lines[p]))
+                for c in self.lines[p]:
+                    for c2 in self.lines[int(c)]:
+                        if c2 in self.lines[p]:
+                            all_tri.add(tuple(sorted((p, int(c), int(c2)))))
+            for tri in all_tri:
+                if self.not_obstructed(tri):
+                    good_tri.append(tri)
+            return good_tri
 
     def reseed(self):
         self.point_color.seed = random.random()
         self.line_color.seed = random.random()
         self.triangle_color.seed = random.random()
 
-    def change_fade(self):
-        self.color_fade = not self.color_fade
-
-    def update(self, num=1):
+    def update(self, global_move=np.zeros(2), num=1):
         # first we update the velocities of the points based on their forces
         self.update_num = (self.update_num + 1) % num
         if self.update_num == 1 or num == 1:
             self.update_vel()
-            self.triangles = self.find_triangles()
-        for f in range(len(self.points)):
+            if self.triangle_show:
+                self.triangles = self.find_triangles()
+        for f in range(self.num):
             # then we update the position of the points based on their velocities
-            self.points[f].move(div=num)
+            self.positions[f] = self.move_point(f, extra=global_move, div=num)
             # then we account for any points that somehow slipped out of bounds
-            if any(self.out_of_bounds(self.points[f].pos)):
+            if any(self.out_of_bounds(self.positions[f])):
                 self.handle_out_of_bounds_point(f)
         # then we update the p_data for the vertex buffer
         self.move_grabbed()
@@ -400,29 +449,40 @@ class Field:
         self.real_ratio = self.scsz[1]/self.height  # ratio of actual height to screen height
 
     def point_to_float(self, point_num):
-        # converts a point to a float 0 - 1
-        x = self.points[point_num].pos[0] / (self.aspect_ratio * self.height)
-        y = self.points[point_num].pos[1] / self.height
+        # converts the point at point_num to a float 0 - 1
+        x = self.positions[point_num][0] / (self.aspect_ratio * self.height)
+        y = self.positions[point_num][1] / self.height
         return x, y
 
     def avg_points_to_float(self, point_nums):
         # converts a list of point indices to their average position as a float 0 - 1
-        x = 0
-        y = 0
+        avg_pos = np.zeros(2)
         for num in point_nums:
-            coords = self.point_to_float(num)
-            x += coords[0]
-            y += coords[1]
-        x /= len(point_nums)
-        y /= len(point_nums)
+            avg_pos += self.positions[num]
+        avg_pos /= len(point_nums)
+        x = avg_pos[0] / (self.aspect_ratio * self.height)
+        y = avg_pos[1] / self.height
         return x, y
+
+    def points_to_rect(self, point_nums):
+        # converts a list of point indices to a rectangle that acts as a line
+        data = []
+        point1 = self.positions[point_nums[0]] * self.real_ratio
+        point2 = self.positions[point_nums[1]] * self.real_ratio
+        size = math.sqrt(dist_sq(point1, point2))
+        offset = np.array([point2[1] - point1[1], point1[0] - point2[0]])
+        offset *= (params.line_width / 2) / size
+        data += list(point1 + offset)
+        data += list(point1 - offset)
+        data += list(point2 - offset)
+        data += list(point2 + offset)
+        return data
 
     def points_to_real(self, point_nums):
         # converts a list of point indices to their corresponding real coords as a flattened list
         data = []
         for num in point_nums:
-            data += [self.points[num].pos[0] * self.real_ratio,
-                     self.points[num].pos[1] * self.real_ratio]
+            data += list(self.positions[int(num)] * self.real_ratio)
         return data
 
     def prepare_data(self):
@@ -434,48 +494,54 @@ class Field:
         self.lc_data = []
         self.tr_data = []
         self.trc_data = []
-        for f in range(len(self.points)):
+        for f in range(self.num):
             self.p_data += self.points_to_real((f,))
             if self.point_color.color_type == 2:
                 self.pc_data += self.point_color.get_color(self.point_to_float(f))
             else:
                 self.pc_data += self.point_color.get_color(f)
-            for i in self.lines[f]:
-                self.l_data += self.points_to_real((f, i))
-                if self.line_color.color_type == 2:
-                    if self.color_fade:
-                        self.lc_data += self.line_color.get_color(self.point_to_float(f))
-                        self.lc_data += self.line_color.get_color(self.point_to_float(i))
-                    else:
-                        self.lc_data += 2 * self.line_color.get_color(self.avg_points_to_float((f, i)))
-                else:
-                    if self.color_fade:
-                        self.lc_data += self.line_color.get_color(tuple(sorted((f, i))), number=2)
-                    else:
-                        self.lc_data += 2 * self.line_color.get_color(tuple(sorted((f, i))))
-        for tri in self.triangles:
-            self.tr_data += self.points_to_real(tri)
-            if self.triangle_color.color_type == 2:
+        for li in self.line_set:
+            if self.rect_lines:
+                self.l_data += self.points_to_rect(li)
+            else:
+                self.l_data += self.points_to_real(li)
+            if self.line_color.color_type == 2:
                 if self.color_fade:
-                    for t in tri:
-                        self.trc_data += self.triangle_color.get_color(self.point_to_float(t))
+                    self.lc_data += self.line_color.get_color(self.point_to_float(li[0]))
+                    self.lc_data += self.line_color.get_color(self.point_to_float(li[1]))
                 else:
-                    self.trc_data += 3 * self.triangle_color.get_color(self.avg_points_to_float(tri))
+                    self.lc_data += 2 * self.line_color.get_color(self.avg_points_to_float(li))
             else:
                 if self.color_fade:
-                    self.trc_data += self.triangle_color.get_color(tri, number=3)
+                    self.lc_data += self.line_color.get_color(li, number=2)
                 else:
-                    self.trc_data += 3 * self.triangle_color.get_color(tri)
+                    self.lc_data += 2 * self.line_color.get_color(li)
+        if self.rect_lines:
+            self.lc_data = stutter(self.lc_data, 3)
+        if self.triangle_show:
+            for tri in self.triangles:
+                self.tr_data += self.points_to_real(tri)
+                if self.triangle_color.color_type == 2:
+                    if self.color_fade:
+                        for t in tri:
+                            self.trc_data += self.triangle_color.get_color(self.point_to_float(t))
+                    else:
+                        self.trc_data += 3 * self.triangle_color.get_color(self.avg_points_to_float(tri))
+                else:
+                    if self.color_fade:
+                        self.trc_data += self.triangle_color.get_color(tri, number=3)
+                    else:
+                        self.trc_data += 3 * self.triangle_color.get_color(tri)
 
-    def draw(self, points=True, lines=False, triangles=False):
-        if triangles:
+    def draw(self, points=True, lines=False):
+        if self.triangle_show:
             pyglet.graphics.draw(len(self.tr_data)//2, pyglet.gl.GL_TRIANGLES,
                                  ('v2f', self.tr_data), ('c3B', self.trc_data))
         if lines:
-            pyglet.graphics.draw(len(self.l_data)//2, pyglet.gl.GL_LINES,
+            pyglet.graphics.draw(len(self.l_data)//2, self.line_type,
                                  ('v2f', self.l_data), ('c3B', self.lc_data))
         if points:
-            pyglet.graphics.draw(len(self.points), pyglet.gl.GL_POINTS,
+            pyglet.graphics.draw(len(self.positions), pyglet.gl.GL_POINTS,
                                  ('v2f', self.p_data), ('c3B', self.pc_data))
 
 
@@ -516,24 +582,27 @@ class GUI(pyglet.window.Window):
         mouse_map = {"left": pyglet.window.mouse.LEFT, "right": pyglet.window.mouse.RIGHT,
                      "middle": pyglet.window.mouse.MIDDLE}
         self.active_button = mouse_map[params.mouse_button.lower()]
+        self.keys = {}
         self.full = True
         self.pause = False
         self.stain = False
         self.fps_show = False
         self.point_show = True
         self.line_show = False
-        self.triangle_show = False
         self.slow_down = 1
+        self.speed_num = 0
+        self.speed = params.manual_speeds[self.speed_num]
 
     def on_key_press(self, symbol, modifiers):
-        key_str = key.symbol_string(symbol)
+        self.keys[pyglet.window.key.symbol_string(symbol)] = True
+        key_str = pyglet.window.key.symbol_string(symbol)
         if key_str == params.fullscreen_key:  # toggle fullscreen
             self.full = not self.full
             self.set_fullscreen(self.full)
         elif key_str == params.pause_key:  # pause
             self.pause = not self.pause
         elif key_str == params.force_frame_key:  # go forward one frame
-            self.dots.update(num=self.slow_down)
+            self.update_dots()
         elif key_str == params.stain_key:  # toggle stain
             self.stain = not self.stain
         elif key_str == params.fps_key:  # toggle fps reading
@@ -546,16 +615,32 @@ class GUI(pyglet.window.Window):
             self.point_show = not self.point_show
         elif key_str == params.line_key:  # show lines
             self.line_show = not self.line_show
-        elif key_str == params.triangle_key:  # show any triangles that hae formed
-            self.triangle_show = not self.triangle_show
+        elif key_str == params.triangle_key:  # show triangles
+            self.dots.set_tri()
+        elif key_str == params.triangle_type_key:  # change triangle type
+            self.dots.set_del()
         elif key_str == params.reseed_key:  # re-seed the random colors
             self.dots.reseed()
-        elif key_str == params.color_fade_key:  # re-seed the random colors
-            self.dots.change_fade()
+        elif key_str == params.color_fade_key:  # toggle fade
+            self.dots.set_fade()
         elif key_str == params.capture_key:  # capture the image on screen into a file
             pyglet.image.get_buffer_manager().get_color_buffer().save(get_new_file_name(params.path_name))
+            # set the buffers again so that stain continues to work
+            pyglet.gl.glReadBuffer(pyglet.gl.GL_FRONT)
+            pyglet.gl.glDrawBuffer(pyglet.gl.GL_BACK)
+        elif key_str == params.speed_toggle:  # toggle which speed manual movement uses
+            self.speed_num += 1
+            self.speed_num %= len(params.manual_speeds)
+            self.speed = params.manual_speeds[self.speed_num]
+            print(self.speed)
         elif key_str == params.quit_key:  # exit
             self.close()
+
+    def on_key_release(self, symbol, modifiers):
+        self.keys[pyglet.window.key.symbol_string(symbol)] = False
+
+    def is_pressed(self, key_str):
+        return bool((key_str in self.keys) and (self.keys[key_str]))
 
     def on_mouse_press(self, x, y, button, modifiers):
         if button == self.active_button:
@@ -573,20 +658,27 @@ class GUI(pyglet.window.Window):
         self._projection.set(width, height, *self.get_framebuffer_size())
         self.dots.resize((width, height))
 
+    def update_dots(self):
+        extra_move = np.zeros(2)
+        extra_move += [self.is_pressed(params.right_key), self.is_pressed(params.up_key)]
+        extra_move -= [self.is_pressed(params.left_key), self.is_pressed(params.down_key)]
+        extra_move *= self.speed
+        self.dots.update(global_move=extra_move, num=self.slow_down)
+
     def update(self, dt):
         if not self.pause:
-            self.dots.update(num=self.slow_down)
+            self.update_dots()
         if not self.stain:
             pyglet.gl.glClear(pyglet.gl.GL_COLOR_BUFFER_BIT)
         else:
             # copy front buffer to back buffer for reliable staining
             pyglet.gl.glCopyPixels(0, 0, self.width, self.height, pyglet.gl.GL_COLOR)
-        self.dots.draw(points=self.point_show, lines=self.line_show, triangles=self.triangle_show)
+        self.dots.draw(points=self.point_show, lines=self.line_show)
         if self.fps_show:
             self.fps_display.draw()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     # just make double sure that there are no path issues
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     if not os.path.exists(params.path_name):

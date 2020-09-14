@@ -8,7 +8,7 @@ import math
 # if you'd like to set your own, set this value to None
 # if this is not None it invalidates everything between here and the control settings
 # possible presets: "mesh", "blob", "shrink", "fireworks", "amoeba"
-behavior_preset = None
+behavior_preset = "blob"
 
 number_of_points = 100  # the number of points
 point_connections = 4  # the number of connections each point will make
@@ -52,12 +52,19 @@ slow_down = 10  # how many times slower slow mode is than normal
 point_key = 'P'  # the key that toggles point visibility
 line_key = 'L'  # the key that toggles line visibility
 triangle_key = 'T'  # the key that toggles triangle visibility
+triangle_type_key = 'Y'  # the key that toggles the types of triangles created
 reseed_key = 'B'  # the key that re-randomizes any randomly chosen colors
 color_fade_key = 'C'  # the key that switches the color mode from static to fade
 capture_key = 'K'  # the key that captures what's on screen into an image
 path_name = 'screenshots'  # the name of the directory to save screenshots to
 quit_key = 'ESCAPE'  # the key that closes the window
 mouse_button = 'RIGHT'  # the mouse button that allows you to manipulate the dots
+left_key = 'LEFT'  # the key to move all points left simultaneously
+right_key = 'RIGHT'  # the key to move all points right simultaneously
+up_key = 'UP'  # the key to move all points up simultaneously
+down_key = 'DOWN'  # the key to move all points down simultaneously
+manual_speeds = (.02, 0.75, 2)  # the various speed settings for moving the points
+speed_toggle = 'Z'  # the key to toggle through the above speed
 
 
 # ----- color settings -----
@@ -70,7 +77,7 @@ mouse_button = 'RIGHT'  # the mouse button that allows you to manipulate the dot
 background_color = (0, 0, 0)  # the color of the background, must be one color
 point_color = (255, 255, 255)  # the color of the points
 line_color = None  # the color of the lines
-triangle_color = ((255, 176, 176), (254, 113, 113), (51, 93, 45), (126, 160, 77))  # the color of the triangles
+triangle_color = ((230, 100, 100), (255, 175, 100), (255, 255, 150))  # the color of the triangles
 
 
 # ----- other aesthetics -----
@@ -79,5 +86,5 @@ line_width = 1  # set the width of the lines in pixels
 
 # these are parameters that help k-means run faster, probably don't worry about them
 pre_means_sorting_smoothness = 8  # a constant to smooth out the step sort
-pre_means_clustering = 100  # a higher number yields more accurate k-means results at the expense of time
+pre_means_clustering = 1000  # a higher number yields more accurate k-means results at the expense of time
 
