@@ -96,7 +96,7 @@ def color_avg(colors):
     return tuple(avg)
 
 
-def step(r, g, b, repetitions=1):
+def step(r, g, b, repetitions=8):
     lum = math.sqrt(0.241 * r + 0.691 * g + 0.068 * b)
     h, s, v = colorsys.rgb_to_hsv(r, g, b)
     h2 = int(h * repetitions)
@@ -127,8 +127,9 @@ def k_means(path, k):
         return pixel_set
     # do it the hard way
     # but first let's parse down our pixel list so as to be practical
-    pixels.sort(key=lambda x: step(x[0], x[1], x[2], params.pre_means_sorting_smoothness))
-    chunk_size = len(pixels) // params.pre_means_clustering
+    pixels.sort(key=lambda x: step(x[0], x[1], x[2]))
+    # the smaller the chunks the better the k means accuracy at the expense of time
+    chunk_size = len(pixels) // 1000
     new_pixels = []
     for f in range(0, len(pixels), chunk_size):
         new_pixels.append(color_avg(pixels[f:f + chunk_size]))

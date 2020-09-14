@@ -83,8 +83,3 @@ triangle_color = ((230, 100, 100), (255, 175, 100), (255, 255, 150))  # the colo
 # ----- other aesthetics -----
 point_size = 2  # set the size of the points in pixels
 line_width = 1  # set the width of the lines in pixels
-
-# these are parameters that help k-means run faster, probably don't worry about them
-pre_means_sorting_smoothness = 8  # a constant to smooth out the step sort
-pre_means_clustering = 1000  # a higher number yields more accurate k-means results at the expense of time
-
