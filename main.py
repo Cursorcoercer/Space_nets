@@ -150,16 +150,89 @@ def k_means(path, k):
     return means
 
 
+class Simplex:
+
+    def __init__(self, scale=1, seed=0):
+        self.f2 = (math.sqrt(3) - 1) / 2
+        self.g2 = (3 - math.sqrt(3)) / 6
+        self.r = 0.6  # r value for the simplex
+        self.scale = scale
+        self.grad_num = 12
+        self.grad = []
+        for f in range(self.grad_num):
+            angle = f * math.tau / self.grad_num
+            self.grad.append([math.cos(angle), math.sin(angle)])
+
+    def get_noise(self, x, y, num=1, seed=0):
+        # return simplex noise
+        x = x / self.scale
+        y = y / self.scale
+        total_noise = np.zeros(num)
+        # Skew the input space to determine which simplex cell we're in
+        s = (x + y) * self.f2
+        i = int(x + s)
+        j = int(y + s)
+        # Unskew the cell origin back to (x,y) space
+        t = (i + j) * self.g2
+        x0 = i - t
+        y0 = j - t
+        # The x,y distances from the cell origin
+        xd = x - x0
+        yd = y - y0
+        # Determine which simplex we are in.
+        i1, j1 = 0, 0  # Offsets for second (middle) corner of simplex in (i,j) coords
+        if xd > yd:  # lower triangle, XY order: (0,0)->(1,0)->(1,1)
+            i1 = 1
+            j1 = 0
+        else:  # upper triangle, YX order: (0,0)->(0,1)->(1,1)
+            i1 = 0
+            j1 = 1
+        # A step of (1,0) in (i,j) means a step of (1-g,-g) in (x,y), and
+        # a step of (0,1) in (i,j) means a step of (-g,1-g) in (x,y), where
+        x1 = xd - i1 + self.g2  # Offsets for middle corner in (x,y) unskewed coords
+        y1 = yd - j1 + self.g2
+        x2 = xd - 1.0 + 2.0 * self.g2  # Offsets for last corner in (x,y) unskewed coords
+        y2 = yd - 1.0 + 2.0 * self.g2
+        # Calculate the contribution from the three corners
+        t0 = 0.5 - xd * xd - yd * yd
+        t1 = 0.5 - x1 * x1 - y1 * y1
+        t2 = 0.5 - x2 * x2 - y2 * y2
+        if t0 > 0:
+            t0 *= t0
+            for f in range(num):
+                gi0 = hash((i, j, seed+f)) % self.grad_num
+                total_noise[f] += t0 * t0 * (self.grad[gi0][0] * xd + self.grad[gi0][1] * yd)
+        if t1 > 0:
+            t1 *= t1
+            for f in range(num):
+                gi1 = hash((i + i1, j + j1, seed+f)) % self.grad_num
+                total_noise[f] += t1 * t1 * (self.grad[gi1][0] * x1 + self.grad[gi1][1] * y1)
+        if t2 > 0:
+            t2 *= t2
+            for f in range(num):
+                gi2 = hash((i + 1, j + 1, seed+f)) % self.grad_num
+                total_noise[f] += t2 * t2 * (self.grad[gi2][0] * x2 + self.grad[gi2][1] * y2)
+        # Add contributions from each corner to get the final noise value.
+        # The result is scaled to return values in the interval [-1,1].
+        return 101 * total_noise
+
+
 class Color:
 
-    def __init__(self, color):
+    def __init__(self, color, scsz):
         self.data = color
+        self.scsz = scsz
         self.seed = random.random()
         self.image = None
         self.pixels = None
         self.color_format = 'RGB'
         self.f_len = len(self.color_format)
         self.color_type = self.data_type()
+        self.noise_vals = (params.white_noise_strength, params.red_noise_strength,
+                           params.green_noise_strength, params.blue_noise_strength)
+        self.noise_num = sum(bool(f) for f in self.noise_vals)
+        if self.noise_num:
+            self.noise = Simplex(scale=self.scsz[1]/params.noise_density)
 
     def data_type(self):
         if self.data is None:
@@ -188,31 +261,42 @@ class Color:
         pos = self.image.width * y * self.f_len + x * self.f_len
         return self.pixels[pos:pos + self.f_len]
 
+    def add_noise(self, color, coords):
+        new_color = list(color)
+        noises = self.noise.get_noise(coords[0], coords[1], num=self.noise_num, seed=self.seed)
+        used = int(bool(self.noise_vals[0]))
+        for f in range(3):
+            if self.noise_vals[0]:
+                # if white, it gets first noise
+                new_color[f] += noises[0] * self.noise_vals[0]
+            if self.noise_vals[f+1]:
+                new_color[f] += noises[used] * self.noise_vals[f+1]
+                used += 1
+            new_color[f] = min(max(int(new_color[f]), 0), 255)
+        return new_color
+
     def reseed(self):
         self.seed = random.random()
 
-    def get_color(self, element, number=1, seed_add=0):
-        if number > 1:
-            # to get multiple different colors for the same element
-            # do not use with type 2 data
-            color_list = tuple()
-            for f in range(int(number)):
-                color_list += self.get_color(element, seed_add=f)
-            return color_list
+    def get_color(self, element, coords, seed_add=0):
+        color_pick = []
         if self.color_type is None:  # random color
             t_rand = hash((element, self.seed+seed_add))
-            return t_rand % 256, (t_rand//256) % 256, ((t_rand//256)//256) % 256
-        if self.color_type == 0:  # single color
-            return self.data
-        if self.color_type == 1:  # color palette
+            color_pick = t_rand % 256, (t_rand//256) % 256, ((t_rand//256)//256) % 256
+        elif self.color_type == 0:  # single color
+            color_pick = self.data
+        elif self.color_type == 1:  # color palette
             t_rand = hash((element, self.seed+seed_add))
-            return self.data[t_rand % len(self.data)]
-        if self.color_type == 2:  # color map
-            # for this the element should be a tuple of two floats from 0 to 1
+            color_pick = self.data[t_rand % len(self.data)]
+        elif self.color_type == 2:  # color map
+            # for this the element should be point coords
             # indicating where on the map to draw the color from
-            x = int(element[0] * (self.image.width - 1))
-            y = int(element[1] * (self.image.height - 1))
-            return self.get_pixel(x, y)
+            x = int(coords[0]/self.scsz[0] * (self.image.width - 1))
+            y = int(coords[1]/self.scsz[1] * (self.image.height - 1))
+            color_pick = self.get_pixel(x, y)
+        if any(self.noise_vals):
+            color_pick = self.add_noise(color_pick, coords)
+        return color_pick
 
 
 class Field:
@@ -253,18 +337,23 @@ class Field:
         self.trc_data = []
         self.color_fade = False
         self.triangle_show = False
+        self.line_show = False
+        self.point_show = True
         self.delaunay_tri = False
         self.grabbed = None
+        self.stasis = set()
         self.last_pos = (0, 0)
-        self.point_color = Color(params.point_color)
-        self.line_color = Color(params.line_color)
-        self.triangle_color = Color(params.triangle_color)
+        self.point_color = Color(params.point_color, self.scsz)
+        self.line_color = Color(params.line_color, self.scsz)
+        self.triangle_color = Color(params.triangle_color, self.scsz)
         self.reset()
 
     def reset(self):
         # generates all particles within the field of the screen
         # origin as bottom left and height as coordinate of top
         for f in range(self.num):
+            if f in self.stasis:
+                continue
             self.positions[f] = [self.height * self.aspect_ratio * random.random(), self.height * random.random()]
             if self.init_vel:
                 # generates a random angle for the velocity to be at
@@ -284,7 +373,25 @@ class Field:
         self.triangles = self.find_triangles()
         self.prepare_data()
 
-    def set_tri(self, val=None):
+    def set_point_show(self, val=None):
+        if val is not None:
+            self.point_show = val
+        else:
+            # default to toggle
+            self.point_show = not self.point_show
+        if self.point_show:
+            self.prepare_data()
+
+    def set_line_show(self, val=None):
+        if val is not None:
+            self.line_show = val
+        else:
+            # default to toggle
+            self.line_show = not self.line_show
+        if self.line_show:
+            self.prepare_data()
+
+    def set_tri_show(self, val=None):
         if val is not None:
             self.triangle_show = val
         else:
@@ -329,6 +436,15 @@ class Field:
         if velocity is not None:
             self.velocities[self.grabbed] = np.array(velocity) / self.real_ratio
 
+    def stasis_grab(self):
+        # put the grabbed point into stasis if there is one
+        if self.grabbed is None:
+            # if none grabbed, clear stasis
+            self.stasis = set()
+        else:
+            self.stasis.add(self.grabbed)
+            self.set_grabbed(None)
+
     def out_of_bounds(self, position):
         # return whether a point is out of bounds or not
         return (position[0] < 0 or self.height * self.aspect_ratio < position[0],
@@ -358,6 +474,9 @@ class Field:
             closest = self.find_closest(f)
             self.lines[f] = closest[1]
             self.sym_lines[f].update(closest[1])
+            stasis_flag = bool(f in self.stasis)
+            if stasis_flag and not self.symmetric_forces:
+                continue
             for c in range(self.feel_num):
                 p = int(closest[1][c])
                 act_dist = closest[0][c]
@@ -367,8 +486,9 @@ class Field:
                     # points are on top of each other
                     continue
                 force = self.funcs[f % len(self.funcs)](act_dist)
-                self.velocities[f] += force * (self.positions[f] - self.positions[p]) / act_dist
-                if self.symmetric_forces:
+                if not stasis_flag:
+                    self.velocities[f] += force * (self.positions[f] - self.positions[p]) / act_dist
+                if self.symmetric_forces and p not in self.stasis:
                     # this makes forces symmetric, but obeying newton is for nerds
                     self.velocities[p] -= force * (self.positions[f] - self.positions[p]) / act_dist
         # forces from the bounds
@@ -429,6 +549,7 @@ class Field:
         self.point_color.seed = random.random()
         self.line_color.seed = random.random()
         self.triangle_color.seed = random.random()
+        self.prepare_data()
 
     def update(self, global_move=np.zeros(2), num=1):
         # first we update the velocities of the points based on their forces
@@ -439,6 +560,8 @@ class Field:
                 self.triangles = self.find_triangles()
         for f in range(self.num):
             # then we update the position of the points based on their velocities
+            if f in self.stasis:
+                continue
             self.positions[f] = self.move_point(f, extra=global_move, div=num)
             # then we account for any points that somehow slipped out of bounds
             if any(self.out_of_bounds(self.positions[f])):
@@ -451,22 +574,18 @@ class Field:
         self.scsz = screen_size
         self.aspect_ratio = self.scsz[0]/self.scsz[1]  # aspect ratio of screen
         self.real_ratio = self.scsz[1]/self.height  # ratio of actual height to screen height
+        self.update()
 
-    def point_to_float(self, point_num):
-        # converts the point at point_num to a float 0 - 1
-        x = self.positions[point_num][0] / (self.aspect_ratio * self.height)
-        y = self.positions[point_num][1] / self.height
-        return x, y
-
-    def avg_points_to_float(self, point_nums):
-        # converts a list of point indices to their average position as a float 0 - 1
-        avg_pos = np.zeros(2)
-        for num in point_nums:
-            avg_pos += self.positions[num]
-        avg_pos /= len(point_nums)
-        x = avg_pos[0] / (self.aspect_ratio * self.height)
-        y = avg_pos[1] / self.height
-        return x, y
+    def avg_points(self, points):
+        # converts a flat list of points to their average
+        avg_x = 0
+        avg_y = 0
+        for f in points[::2]:
+            avg_x += f
+        for f in points[1::2]:
+            avg_y += f
+        num = len(points) // 2
+        return avg_x / num, avg_y / num
 
     def points_to_rect(self, point_nums):
         # converts a list of point indices to a rectangle that acts as a line
@@ -498,53 +617,43 @@ class Field:
         self.lc_data = []
         self.tr_data = []
         self.trc_data = []
-        for f in range(self.num):
-            self.p_data += self.points_to_real((f,))
-            if self.point_color.color_type == 2:
-                self.pc_data += self.point_color.get_color(self.point_to_float(f))
-            else:
-                self.pc_data += self.point_color.get_color(f)
-        for li in self.line_set:
+        if self.point_show:
+            for f in range(self.num):
+                self.p_data += self.points_to_real((f,))
+                self.pc_data += self.point_color.get_color(f, self.p_data[-2:])
+        if self.line_show:
+            for li in self.line_set:
+                if self.rect_lines:
+                    self.l_data += self.points_to_rect(li)
+                    last_points = self.points_to_real(li)
+                else:
+                    self.l_data += self.points_to_real(li)
+                    last_points = self.l_data[-4:]
+                if self.color_fade:
+                    self.lc_data += self.line_color.get_color(li, last_points[:2])
+                    self.lc_data += self.line_color.get_color(li, last_points[-2:], seed_add=1)
+                else:
+                    self.lc_data += 2 * self.line_color.get_color(li, self.avg_points(last_points))
             if self.rect_lines:
-                self.l_data += self.points_to_rect(li)
-            else:
-                self.l_data += self.points_to_real(li)
-            if self.line_color.color_type == 2:
-                if self.color_fade:
-                    self.lc_data += self.line_color.get_color(self.point_to_float(li[0]))
-                    self.lc_data += self.line_color.get_color(self.point_to_float(li[1]))
-                else:
-                    self.lc_data += 2 * self.line_color.get_color(self.avg_points_to_float(li))
-            else:
-                if self.color_fade:
-                    self.lc_data += self.line_color.get_color(li, number=2)
-                else:
-                    self.lc_data += 2 * self.line_color.get_color(li)
-        if self.rect_lines:
-            self.lc_data = stutter(self.lc_data, 3)
+                self.lc_data = stutter(self.lc_data, 3)
         if self.triangle_show:
             for tri in self.triangles:
                 self.tr_data += self.points_to_real(tri)
-                if self.triangle_color.color_type == 2:
-                    if self.color_fade:
-                        for t in tri:
-                            self.trc_data += self.triangle_color.get_color(self.point_to_float(t))
-                    else:
-                        self.trc_data += 3 * self.triangle_color.get_color(self.avg_points_to_float(tri))
+                if self.color_fade:
+                    for t in range(len(tri)):
+                        self.trc_data += self.triangle_color.get_color(tri, (self.tr_data[t*2-6],
+                                                                             self.tr_data[t*2-5]), seed_add=t)
                 else:
-                    if self.color_fade:
-                        self.trc_data += self.triangle_color.get_color(tri, number=3)
-                    else:
-                        self.trc_data += 3 * self.triangle_color.get_color(tri)
+                    self.trc_data += 3 * self.triangle_color.get_color(tri, self.avg_points(self.tr_data[-6:]))
 
-    def draw(self, points=True, lines=False):
+    def draw(self):
         if self.triangle_show:
             pyglet.graphics.draw(len(self.tr_data)//2, pyglet.gl.GL_TRIANGLES,
                                  ('v2f', self.tr_data), ('c3B', self.trc_data))
-        if lines:
+        if self.line_show:
             pyglet.graphics.draw(len(self.l_data)//2, self.line_type,
                                  ('v2f', self.l_data), ('c3B', self.lc_data))
-        if points:
+        if self.point_show:
             pyglet.graphics.draw(len(self.positions), pyglet.gl.GL_POINTS,
                                  ('v2f', self.p_data), ('c3B', self.pc_data))
 
@@ -553,7 +662,11 @@ class GUI(pyglet.window.Window):
 
     def __init__(self):
         title = 'point interactions'
-        super(GUI, self).__init__(caption=title, fullscreen=True, resizable=True)
+        if params.anti_aliasing:
+            config = pyglet.gl.Config(sample_buffers=1, samples=4)
+        else:
+            config = None
+        super(GUI, self).__init__(caption=title, config=config, fullscreen=True, resizable=True)
         self.fps_display = pyglet.window.FPSDisplay(window=self)
         self.set_minimum_size(100, 100)
         pyglet.gl.glReadBuffer(pyglet.gl.GL_FRONT)
@@ -592,8 +705,6 @@ class GUI(pyglet.window.Window):
         self.pause = False
         self.stain = False
         self.fps_show = False
-        self.point_show = True
-        self.line_show = False
         self.slow_down = 1
         self.speed_num = 0
         self.speed = params.manual_speeds[self.speed_num]
@@ -617,17 +728,19 @@ class GUI(pyglet.window.Window):
         elif key_str == params.slow_key:  # make the animation go slow
             self.slow_down = params.slow_down - self.slow_down
         elif key_str == params.point_key:  # show points
-            self.point_show = not self.point_show
+            self.dots.set_point_show()
         elif key_str == params.line_key:  # show lines
-            self.line_show = not self.line_show
+            self.dots.set_line_show()
         elif key_str == params.triangle_key:  # show triangles
-            self.dots.set_tri()
+            self.dots.set_tri_show()
         elif key_str == params.triangle_type_key:  # change triangle type
             self.dots.set_del()
         elif key_str == params.reseed_key:  # re-seed the random colors
             self.dots.reseed()
         elif key_str == params.color_fade_key:  # toggle fade
             self.dots.set_fade()
+        elif key_str == params.stasis_key:
+            self.dots.stasis_grab()
         elif key_str == params.capture_key:  # capture the image on screen into a file
             pyglet.image.get_buffer_manager().get_color_buffer().save(get_new_file_name(params.path_name))
             # set the buffers again so that stain continues to work
@@ -678,7 +791,7 @@ class GUI(pyglet.window.Window):
         else:
             # copy front buffer to back buffer for reliable staining
             pyglet.gl.glCopyPixels(0, 0, self.width, self.height, pyglet.gl.GL_COLOR)
-        self.dots.draw(points=self.point_show, lines=self.line_show)
+        self.dots.draw()
         if self.fps_show:
             self.fps_display.draw()
 

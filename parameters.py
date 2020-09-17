@@ -8,11 +8,11 @@ import math
 # if you'd like to set your own, set this value to None
 # if this is not None it invalidates everything between here and the control settings
 # possible presets: "mesh", "blob", "shrink", "fireworks", "amoeba", "gas"
-behavior_preset = "gas"
+behavior_preset = None
 
-number_of_points = 100  # the number of points
-point_connections = 4  # the number of connections each point will make
-air_resistance = 0.9  # the amount of air resistance, 1 is no resistance, 0 is no movement
+number_of_points = 3  # the number of points
+point_connections = 2  # the number of connections each point will make
+air_resistance = 1  # the amount of air resistance, 1 is no resistance, 0 is no movement
 bounciness = 1  # how bouncy the walls are, 1 conserves velocity, 0 is no bounce
 init_velocity = 1  # the velocity that the points have to start out
 symmetric_forces = True  # determines whether or not point forces are symmetric True or False
@@ -37,7 +37,7 @@ def hold(distance, divider):
 
 # set the function(s)
 # some examples: hold(10, 5) or hold(6, 5), hold(12, 5) or repel(4)
-point_function = hold(10, 5)
+point_function = lambda x: 0
 
 
 # ----- control settings -----
@@ -49,7 +49,7 @@ stain_key = 'S'  # the key that toggles whether or not the screen gets cleared
 fps_key = 'F'  # the key that toggles the on-screen fps
 reset_key = 'R'  # the key that resets all points to random positions
 slow_key = 'W'  # the key that toggles slow mode
-slow_down = 20  # how many times slower slow mode is than normal
+slow_down = 10  # how many times slower slow mode is than normal
 point_key = 'P'  # the key that toggles point visibility
 line_key = 'L'  # the key that toggles line visibility
 triangle_key = 'T'  # the key that toggles triangle visibility
@@ -60,6 +60,8 @@ capture_key = 'K'  # the key that captures what's on screen into an image
 path_name = 'screenshots'  # the name of the directory to save screenshots to
 quit_key = 'ESCAPE'  # the key that closes the window
 mouse_button = 'RIGHT'  # the mouse button that allows you to manipulate the dots
+stasis_key = 'I'  # the key that lets you put the grabbed point into stasis
+                  # if pressed when no points are grabbed it will release all current stasis points
 left_key = 'LEFT'  # the key to move all points left simultaneously
 right_key = 'RIGHT'  # the key to move all points right simultaneously
 up_key = 'UP'  # the key to move all points up simultaneously
@@ -76,11 +78,19 @@ speed_toggle = 'Z'  # the key to toggle through the above speed
 # example k means r"path\folder\file_name.png", 5
 # or set to None for random colors
 background_color = (0, 0, 0)  # the color of the background, must be one color
-point_color = (255, 255, 255)  # the color of the points
-line_color = None  # the color of the lines
-triangle_color = ((230, 100, 100), (255, 175, 100), (255, 255, 150))  # the color of the triangles
+point_color = (200, 200, 200)  # the color of the points
+line_color = "palettes/5 warm red.png", 5  # the color of the lines
+triangle_color = "palettes/5 warm red.png", 5  # the color of the triangles
 
 
 # ----- other aesthetics -----
 point_size = 2  # set the size of the points in pixels
-line_width = 1  # set the width of the lines in pixels
+line_width = 2  # set the width of the lines in pixels
+anti_aliasing = True  # set True to anti-alias, set False to just alias
+# use the below values to optionally add noise to all onscreen colors
+# set all strengths to 0 if no noise is desired
+white_noise_strength = 0  # the intensity of overall noise
+red_noise_strength = 50  # the intensity of the noise in the red
+green_noise_strength = 50  # the intensity of the noise in the green
+blue_noise_strength = 50  # the intensity of the noise in the blue
+noise_density = 3  # use this to choose how frequently the noise should modulate, higher is more
