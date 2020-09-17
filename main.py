@@ -302,7 +302,7 @@ class Color:
 class Field:
 
     def __init__(self, point_num, height, feel_num, air_resistance, bounciness, funcs, screen_size,
-                 symmetric=True, init_vel=0):
+                 symmetric=True, init_vel=0, point_show=True, line_show=False, tri_show=False):
         self.num = point_num
         self.height = height
         self.feel_num = feel_num
@@ -336,9 +336,9 @@ class Field:
         self.tr_data = []
         self.trc_data = []
         self.color_fade = False
-        self.triangle_show = False
-        self.line_show = False
-        self.point_show = True
+        self.triangle_show = tri_show
+        self.line_show = line_show
+        self.point_show = point_show
         self.delaunay_tri = False
         self.grabbed = None
         self.stasis = set()
@@ -686,6 +686,9 @@ class GUI(pyglet.window.Window):
                               self.get_size(), symmetric=False)
         elif params.behavior_preset == "gas":
             self.dots = Field(100, 100, 4, 1, 1, lambda x: 0, self.get_size(), init_vel=1)
+        elif params.behavior_preset == "sweep":
+            self.dots = Field(3, 100, 1, 1, 1, lambda x: 0, self.get_size(), init_vel=1,
+                              point_show=False, line_show=True)
         else:
             self.dots = Field(params.number_of_points, 100, params.point_connections,
                               params.air_resistance, params.bounciness, params.point_function,

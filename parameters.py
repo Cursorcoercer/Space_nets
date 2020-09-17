@@ -7,11 +7,11 @@ import math
 # first you can choose between some preset behaviors
 # if you'd like to set your own, set this value to None
 # if this is not None it invalidates everything between here and the control settings
-# possible presets: "mesh", "blob", "shrink", "fireworks", "amoeba", "gas"
+# possible presets: "mesh", "blob", "shrink", "fireworks", "amoeba", "gas", "sweep"
 behavior_preset = None
 
-number_of_points = 3  # the number of points
-point_connections = 2  # the number of connections each point will make
+number_of_points = 100  # the number of points
+point_connections = 4  # the number of connections each point will make
 air_resistance = 1  # the amount of air resistance, 1 is no resistance, 0 is no movement
 bounciness = 1  # how bouncy the walls are, 1 conserves velocity, 0 is no bounce
 init_velocity = 1  # the velocity that the points have to start out
@@ -86,7 +86,7 @@ triangle_color = "palettes/5 warm red.png", 5  # the color of the triangles
 # ----- other aesthetics -----
 point_size = 2  # set the size of the points in pixels
 line_width = 2  # set the width of the lines in pixels
-anti_aliasing = True  # set True to anti-alias, set False to just alias
+anti_aliasing = False  # set True to anti-alias, set False to just alias
 # use the below values to optionally add noise to all onscreen colors
 # set all strengths to 0 if no noise is desired
 white_noise_strength = 0  # the intensity of overall noise
